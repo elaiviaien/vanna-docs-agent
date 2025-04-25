@@ -34,14 +34,16 @@ MODEL_NAME = os.environ.get("MODEL_NAME")
 EMBEDDING_MODEL_NAME = os.getenv('EMBEDDING_MODEL_NAME', 'text-embedding-ada-002')
 MAX_TOKENS = 8192
 OVERLAP_TOKENS = 100
-
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
 
 def get_embed_model():
     """Create and return the embedding model instance."""
     return AzureOpenAIEmbedding(
-        api_version="2024-12-01-preview",
-        azure_endpoint="https://skryp-m9y44j2k-eastus2.cognitiveservices.azure.com/",
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=AZURE_API_VERSION,
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=AZURE_OPENAI_API_KEY,
         model=EMBEDDING_MODEL_NAME,
         deployment_name=EMBEDDING_MODEL_NAME
     )
