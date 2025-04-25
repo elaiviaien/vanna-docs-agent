@@ -3,52 +3,101 @@ import logging
 import os
 import time
 
+import tiktoken
 from dotenv import load_dotenv
+
 from llama_index.core import (
     Settings,
     StorageContext,
     load_index_from_storage,
     VectorStoreIndex,
-    Document,
+    SimpleDirectoryReader, Document,
 )
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import CodeSplitter, SemanticSplitterNodeParser, \
+    JSONNodeParser, TokenTextSplitter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 
-from utils import sync_repo
+from utils import filter_files, sync_repo,setup_logging
 
+setup_logging()
 load_dotenv()
 
-REPO_URL     = os.environ.get("REPO_URL", "https://github.com/vanna-ai/vanna.git")
-LOCAL_PATH   = os.environ.get("LOCAL_PATH", "./.cache/vanna")
+REPO_URL = os.environ.get("REPO_URL", "https://github.com/vanna-ai/vanna.git")
+LOCAL_PATH = os.environ.get("LOCAL_PATH", "./.cache/vanna")
 LAST_SHA_PATH = os.environ.get("LAST_SHA_PATH", "./.cache/last_indexed.sha")
 INDEX_STORAGE = os.environ.get("INDEX_STORAGE", "./.cache/index_storage")
 
-def load_and_chunk(files: list[str]) -> list:
-    """
-    Read each file into a Document, then split into chunk-nodes.
-    """
-    docs = []
-    for path in files:
-        if not path.lower().endswith((".py", ".md", ".txt")):
-            continue
-        try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-        except Exception as e:
-            logging.warning(f"Could not read {path}: {e}")
-            continue
-        docs.append(Document(text=text, metadata={"source": path}))
 
-    splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=200)
-    nodes = splitter.get_nodes_from_documents(docs)
-    logging.info(f"Split {len(docs)} docs into {len(nodes)} nodes.")
-    return nodes
+def enforce_max_tokens(nodes, max_tokens=8192, overlap_tokens=100, model_name="gpt-4"):
+    """
+    Splits any node exceeding `max_tokens` into smaller chunks using OpenAI's tokenizer.
+    """
+    final_nodes = []
+
+    # Get tokenizer for the given OpenAI model
+    encoding = tiktoken.encoding_for_model(model_name)
+
+    # Token-aware text splitter
+    splitter = TokenTextSplitter(
+        chunk_size=max_tokens,
+        chunk_overlap=overlap_tokens,
+        tokenizer=encoding.encode  # <- tokenizer function
+    )
+
+    for node in nodes:
+        text = node.text
+        if len(encoding.encode(text)) <= max_tokens:
+            final_nodes.append(node)
+        else:
+            doc = Document(text=text, metadata=node.metadata)
+            sub_nodes = splitter.get_nodes_from_documents([doc])
+            final_nodes.extend(sub_nodes)
+
+    return final_nodes
+def load_and_chunk(files: list[str]) -> list:
+    # Filter out non-text files explicitly before loading
+    text_files = filter_files(files)
+    if not text_files:
+        logging.warning("No text files found in the provided files list.")
+
+    documents = SimpleDirectoryReader(
+        input_files=text_files,
+        recursive=True
+    ).load_data()
+
+    # Add metadata and compute line numbers
+    for doc in documents:
+        full_text = doc.text
+        start_idx = 0
+        doc.metadata = {
+            "file_path": doc.metadata.get("file_name", "unknown")
+        }
+
+    py_docs = [file for file in documents if file.metadata.get("file_path").endswith(".py")]
+    json_docs = [file for file in documents if file.metadata.get("file_path").endswith(".json")]
+    other_docs = [file for file in documents if
+                  not file.metadata.get("file_path").endswith(".py") and not file.metadata.get("file_path").endswith(
+                      ".json")]
+
+    json_nodes = JSONNodeParser().get_nodes_from_documents(json_docs)
+    py_nodes = CodeSplitter(language="python").get_nodes_from_documents(py_docs)
+    splitter = SemanticSplitterNodeParser(buffer_size=1, breakpoint_percentile_threshold=95,
+                                          embed_model=OpenAIEmbedding())
+    nodes = splitter.get_nodes_from_documents(other_docs)
+    logging.info(
+        f"py docs {len(py_docs)}, py nodes {len(py_nodes)}, json docs {len(json_docs)}, json nodes {len(json_nodes)}, other docs {len(other_docs)}, other nodes {len(nodes)}")
+    all_nodes = py_nodes + nodes + json_nodes
+    safe_nodes = enforce_max_tokens(all_nodes, max_tokens=8192)
+
+    return safe_nodes
+
 
 def create_index(nodes: list) -> VectorStoreIndex:
     index = VectorStoreIndex(nodes)
     logging.info("Created new VectorStoreIndex from scratch.")
     return index
+
 
 def main():
     # Sync repository and find changes
