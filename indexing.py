@@ -26,14 +26,14 @@ from utils import filter_files, sync_repo, setup_logging
 
 load_dotenv()
 
-# Configuration constants
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/vanna-ai/vanna.git")
 LOCAL_PATH = os.environ.get("LOCAL_PATH", "./.cache/vanna")
 LAST_SHA_PATH = os.environ.get("LAST_SHA_PATH", "./.cache/last_indexed.sha")
 INDEX_STORAGE = os.environ.get("INDEX_STORAGE", "./.cache/index_storage")
+MODEL_NAME = os.environ.get("MODEL_NAME")
+EMBEDDING_MODEL_NAME = os.getenv('EMBEDDING_MODEL_NAME', 'text-embedding-ada-002')
 MAX_TOKENS = 8192
 OVERLAP_TOKENS = 100
-MODEL_NAME = "gpt-4"
 
 
 def get_embed_model():
@@ -42,23 +42,14 @@ def get_embed_model():
         api_version="2024-12-01-preview",
         azure_endpoint="https://skryp-m9y44j2k-eastus2.cognitiveservices.azure.com/",
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        model="text-embedding-ada-002",
-        deployment_name="text-embedding-ada-002"
+        model=EMBEDDING_MODEL_NAME,
+        deployment_name=EMBEDDING_MODEL_NAME
     )
 
 
 def enforce_max_tokens(nodes, max_tokens=MAX_TOKENS, overlap_tokens=OVERLAP_TOKENS, model_name=MODEL_NAME):
     """
     Splits any node exceeding `max_tokens` into smaller chunks using OpenAI's tokenizer.
-
-    Args:
-        nodes: List of document nodes
-        max_tokens: Maximum number of tokens per chunk
-        overlap_tokens: Number of tokens to overlap between chunks
-        model_name: Name of the model for tokenization
-
-    Returns:
-        List of nodes with enforced token limits
     """
     final_nodes = []
     encoding = tiktoken.encoding_for_model(model_name)
@@ -84,12 +75,6 @@ def enforce_max_tokens(nodes, max_tokens=MAX_TOKENS, overlap_tokens=OVERLAP_TOKE
 def load_and_chunk(files: List[str]) -> List:
     """
     Load and chunk documents from the provided file paths.
-
-    Args:
-        files: List of file paths to process
-
-    Returns:
-        List of processed document nodes
     """
     # Filter out non-text files
     text_files = filter_files(files)
@@ -160,7 +145,7 @@ def sync_repo_and_update_index():
     # Create or update index
     t1 = time.time()
     try:
-        # Try to load existing index
+        # load existing index
         storage_ctx = StorageContext.from_defaults(persist_dir=INDEX_STORAGE)
         index = load_index_from_storage(storage_ctx)
         index.insert_nodes(nodes)
