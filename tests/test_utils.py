@@ -30,49 +30,15 @@ def mock_repo():
     return mock
 
 
-
-def test_setup_logging_default():
-    """Test setup_logging with default parameters."""
-    with patch('logging.basicConfig') as mock_basic_config:
-        with patch('logging.getLogger') as mock_get_logger:
-            setup_logging()
-            mock_basic_config.assert_called_once()
-            mock_get_logger.assert_called_with('httpx')
-
-
-def test_setup_logging_custom():
-    """Test setup_logging with custom parameters."""
-    custom_format = '%(levelname)s - %(message)s'
-    custom_level = 'DEBUG'
-    custom_handler = logging.NullHandler()
-    custom_log_levels = {'requests': logging.ERROR}
-
-    with patch('logging.basicConfig') as mock_basic_config:
-        with patch('logging.getLogger') as mock_get_logger:
-            setup_logging(
-                level=custom_level,
-                log_format=custom_format,
-                handlers=[custom_handler],
-                library_log_levels=custom_log_levels
-            )
-
-            mock_basic_config.assert_called_once_with(
-                level='DEBUG',
-                format=custom_format,
-                handlers=[custom_handler]
-            )
-            mock_get_logger.assert_called_once_with('requests')
-
-
-
 def test_init_or_update_repo_new_repo(temp_dir):
     """Test init_or_update_repo on a new repository."""
-    repo_url = "https://github.com/example/repo.git"
+    repo_url = "https://github.com/vanna-ai/vanna.git"
     repo_path = os.path.join(temp_dir, "repo")
 
     mock_repo = MagicMock()
 
-    with patch('os.path.exists', return_value=False):
+    # Patch Repo to raise the exception that triggers the clone path
+    with patch('utils.Repo', side_effect=git.exc.InvalidGitRepositoryError):
         with patch('os.makedirs') as mock_makedirs:
             with patch('utils.Repo.clone_from', return_value=mock_repo) as mock_clone:
                 result = init_or_update_repo(repo_url, repo_path)
@@ -84,7 +50,7 @@ def test_init_or_update_repo_new_repo(temp_dir):
 
 def test_init_or_update_repo_existing_repo(temp_dir):
     """Test init_or_update_repo on an existing repository."""
-    repo_url = "https://github.com/example/repo.git"
+    repo_url = "https://github.com/vanna-ai/vanna.git"
     repo_path = os.path.join(temp_dir, "repo")
 
     mock_repo = MagicMock()

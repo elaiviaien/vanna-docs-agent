@@ -1,7 +1,7 @@
 import logging
 import mimetypes
 import os
-from typing import List, Union, Optional, Set
+from typing import List, Union, Optional, Set, Mapping
 
 import git
 from git import Repo, InvalidGitRepositoryError
@@ -26,6 +26,8 @@ EXCLUDED_DIRS: Set[str] = {
 
 def setup_logging(
         level: Union[int, str] = logging.INFO,
+        handlers: Optional[List[logging.Handler]] = None,
+        library_log_levels: Mapping[str, int] = {'httpx': logging.WARNING},
         log_format: str = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
         log_file: Optional[str] = None
 ) -> None:
