@@ -125,7 +125,7 @@ def test_load_and_chunk(mock_documents, mock_embedding_model):
             with patch('indexing.get_embed_model', return_value=mock_embedding_model):
                 with patch('indexing.JSONNodeParser') as MockJSONParser:
                     with patch('indexing.CodeSplitter') as MockCodeSplitter:
-                        with patch('indexing.SemanticSplitterNodeParser') as MockSemanticSplitter:
+                        with patch('indexing.SentenceSplitter') as MockSemanticSplitter:
                             with patch('indexing.enforce_max_tokens') as mock_enforce:
                                 # Setup node parser mocks
                                 json_node = MagicMock(spec=Node)
