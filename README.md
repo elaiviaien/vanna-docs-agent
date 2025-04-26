@@ -145,6 +145,11 @@ test the system’s behavior across varied inputs.
 - **sentence-transformers**: Cross-encoder for reranking.
 - **Docker**: Containerization for portability.
 
+## Reranker note
+Cross-encoder (cross-encoder/ms-marco-MiniLM-L-6-v2) was used to rerank the top 5 nodes retrieved by the BM25 and vector store retrievers. This model is designed for reranking tasks, where it takes pairs of query and document embeddings and predicts a relevance score.
+But with it's dependency on the `sentence-transformers` library, it led to huge docker image size, so for now was taken desicion to use LLMReranker.
+
+
 ## Possible improvements
 
 **Custom Chunkers with Line Tracking**
