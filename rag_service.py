@@ -1,18 +1,20 @@
 import json
 import logging
-import os
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Dict, Any
 
-from llama_index.core import PromptTemplate, Settings, StorageContext, load_index_from_storage
-from llama_index.core.indices import VectorStoreIndex
-from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core import PromptTemplate, StorageContext, load_index_from_storage
+# from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core.postprocessor import LLMRerank
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.retrievers import BaseRetriever
-from llama_index.core.schema import QueryBundle, NodeWithScore
+from llama_index.core.schema import QueryBundle
 from llama_index.retrievers.bm25 import BM25Retriever
 
-OUT_OF_SCOPE_THRESHOLD = -5
+from indexing import sync_repo_and_update_index
+
+OUT_OF_SCOPE_THRESHOLD = 5
+
 
 class HybridRetriever(BaseRetriever):
     def __init__(self, bm25_retriever, vector_retriever):
@@ -26,6 +28,7 @@ class HybridRetriever(BaseRetriever):
         all_nodes = bm25_nodes + vector_nodes
         unique_nodes = {node.node_id: node for node in all_nodes}
         return list(unique_nodes.values())
+
 
 class RAGService:
     def __init__(self, index_storage: str, local_path: str):
@@ -44,8 +47,12 @@ class RAGService:
             logging.info(f"Index loaded in {index_time:.2f} seconds")
             return True
         except (FileNotFoundError, json.JSONDecodeError):
-            logging.error("Index not found or invalid. Please build it first.")
-            return False
+            sync_repo_and_update_index()
+            storage_ctx = StorageContext.from_defaults(persist_dir=self.index_storage)
+            self.index = load_index_from_storage(storage_context=storage_ctx)
+            index_time = time.time() - index_start
+            logging.info(f"Index loaded in {index_time:.2f} seconds")
+            return True
 
     def setup_query_engine(self):
         if not self.index:
@@ -71,11 +78,11 @@ class RAGService:
 
         hybrid_retriever = HybridRetriever(bm25_retriever, vector_retriever)
 
-        rerank = SentenceTransformerRerank(
-            model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-            top_n=5
-        )
-
+        # rerank = SentenceTransformerRerank(
+        #     model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        #     top_n=5
+        # )
+        rerank = LLMRerank(top_n=5)
         self.query_engine = RetrieverQueryEngine.from_args(
             retriever=hybrid_retriever,
             node_postprocessors=[rerank],

@@ -35,6 +35,8 @@ OVERLAP_TOKENS = 100
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
+
+
 def get_embed_model():
     """Create and return the embedding model instance."""
     return AzureOpenAIEmbedding(
@@ -108,7 +110,6 @@ def load_and_chunk(files: List[str]) -> List:
     splitter = SentenceSplitter()
     other_nodes = splitter.get_nodes_from_documents(other_docs)
 
-    # Combine all nodes and enforce token limits
     all_nodes = py_nodes + other_nodes + json_nodes
     safe_nodes = enforce_max_tokens(all_nodes)
     return safe_nodes
@@ -116,24 +117,21 @@ def load_and_chunk(files: List[str]) -> List:
 
 def sync_repo_and_update_index():
     """Main function to sync repository and update index."""
-    # Configure embedding
     Settings.embed_model = get_embed_model()
-
 
     # Get files changed since last sync
     changed = sync_repo(REPO_URL, LOCAL_PATH, LAST_SHA_PATH)
     nodes = []
     # Choose which files to index
     all_files_to_indx = [os.path.join(dp, f)
-                        for dp, _, fs in os.walk(LOCAL_PATH)
-                        for f in fs]
+                         for dp, _, fs in os.walk(LOCAL_PATH)
+                         for f in fs]
     if changed:
         # Load and chunk files
         t0 = time.time()
         nodes = load_and_chunk(changed)
         logging.info(f"Chunking done in {time.time() - t0:.2f}s")
 
-    # Create or update index
     t1 = time.time()
     try:
         # load existing index

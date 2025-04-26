@@ -78,7 +78,8 @@ def test_enforce_max_tokens_exceeds_limit(mock_nodes):
     with patch('tiktoken.encoding_for_model') as mock_encoding:
         mock_tokenizer = MagicMock()
         # Make large text return more than MAX_TOKENS
-        mock_tokenizer.encode.side_effect = lambda text: [0] * (MAX_TOKENS + 1000 if "alphabet " * 10000 in text else 50)
+        mock_tokenizer.encode.side_effect = lambda text: [0] * (
+            MAX_TOKENS + 1000 if "alphabet " * 10000 in text else 50)
         mock_encoding.return_value = mock_tokenizer
 
         with patch('indexing.TokenTextSplitter') as MockSplitter:

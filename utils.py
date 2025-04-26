@@ -1,10 +1,10 @@
 import logging
 import mimetypes
 import os
-from types import MappingProxyType
-from typing import List, Union, Optional, Iterable, Mapping, Set
+from typing import List, Union, Optional, Set
+
 import git
-from git import Repo
+from git import Repo, InvalidGitRepositoryError
 
 EXCLUDED_MIME_PREFIXES: Set[str] = {
     'image', 'audio', 'video', 'application/x-msdownload',
@@ -23,47 +23,58 @@ EXCLUDED_DIRS: Set[str] = {
     'node_modules', 'venv', 'env', '.venv'
 }
 
+
 def setup_logging(
         level: Union[int, str] = logging.INFO,
         log_format: str = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-        handlers: Optional[Iterable[logging.Handler]] = None,
-        library_log_levels: Mapping[str, int] = MappingProxyType({'httpx': logging.WARNING})
+        log_file: Optional[str] = None
 ) -> None:
-    """
-    Configure application logging with customizable format and levels.
-
-    Args:
-        level: The logging level (int or string like 'INFO')
-        log_format: String format for log messages
-        handlers: List of logging handlers to use (creates StreamHandler if None)
-        library_log_levels: Dictionary mapping library names to logging levels
-    """
+    """Configure logging to output to console and file"""
     # Convert string log levels to uppercase
     if isinstance(level, str):
         level = level.upper()
 
-    if handlers is None:
-        handlers = [logging.StreamHandler()]
+    # Create formatter
+    formatter = logging.Formatter(log_format)
 
-    logging.basicConfig(level=level, format=log_format, handlers=handlers)
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
 
-    # Set log levels for specific libraries
-    for library, lib_level in library_log_levels.items():
-        logging.getLogger(library).setLevel(lib_level)
+    # Clear existing handlers to avoid duplicates
+    root_logger.handlers = []
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # File handler if specified
+    if log_file:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    # Set library-specific log levels
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+
 
 def init_or_update_repo(repo_url: str, path: str) -> Repo:
     """
     Clone the repository if not present, otherwise fetch the latest changes.
     """
-    if not os.path.exists(path):
+    try:
+        repo = Repo(path)
+        logging.info(f"Fetching updates for repository at {path}")
+        repo.remotes.origin.fetch()
+        return repo
+    except InvalidGitRepositoryError:
         logging.info(f"Cloning repository {repo_url} → {path}")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         return Repo.clone_from(repo_url, path, depth=1)
 
-    repo = Repo(path)
-    logging.info(f"Fetching updates for repository at {path}")
-    repo.remotes.origin.fetch()
-    return repo
+
 
 
 def get_last_sha(sha_path: str) -> Optional[str]:
@@ -187,5 +198,3 @@ def filter_files(files: List[str]) -> List[str]:
         filtered.append(file_path)
 
     return filtered
-
-

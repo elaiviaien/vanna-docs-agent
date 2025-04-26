@@ -1,19 +1,20 @@
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
+from fastapi.responses import Response
+from llama_index.core import Settings
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
-from llama_index.core import Settings
 
+from rag_evaluator import run_rag_evaluator
 from rag_service import RAGService
 from utils import setup_logging
 
 load_dotenv()
-setup_logging()
+setup_logging(log_file="logs/app.log")
 rag_service = None
 
 
@@ -52,9 +53,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Optional cleanup on shutdown
-    print("Shutting down application")
-
 
 app = FastAPI(lifespan=lifespan)
 
@@ -67,6 +65,14 @@ async def query_index(query: str):
         return {"error": "RAG service not initialized properly"}
 
     return rag_service.process_query(query)
+
+
+@app.get("/evaluate")
+async def evaluate_index(background_tasks: BackgroundTasks):
+    background_tasks.add_task(run_rag_evaluator)
+
+    return Response(status_code=202,
+                    content="Evaluation started in background.Check logs for progress and `evaluation_data` dir for results.")
 
 
 if __name__ == "__main__":
