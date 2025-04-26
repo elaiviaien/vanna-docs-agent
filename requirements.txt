@@ -3,8 +3,6 @@ llama-index==0.12.33
 llama-index-embeddings-azure-openai==0.3.2
 llama-index-retrievers-bm25==0.5.2
 pytest==8.3.5
-ragas==0.2.15
-sentence-transformers==4.1.0
 spacy==3.8.5
 tree-sitter-language-pack==0.7.2
 tree-sitter==0.24.0
