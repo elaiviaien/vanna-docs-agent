@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -9,9 +10,10 @@ from llama_index.llms.azure_openai import AzureOpenAI
 from llama_index.core import Settings
 
 from rag_service import RAGService
+from utils import setup_logging
 
-load_dotenv(override=True)
-
+load_dotenv()
+setup_logging()
 rag_service = None
 
 
@@ -39,14 +41,14 @@ async def lifespan(app: FastAPI):
     INDEX_STORAGE = os.environ.get("INDEX_STORAGE", ".cache/index_storage")
     LOCAL_PATH = os.environ.get("LOCAL_PATH", ".cache/vanna")
 
-    print(f"[{time.time()}] Initializing RAG service")
+    logging.info(f"Initializing RAG service")
     rag_service = RAGService(index_storage=INDEX_STORAGE, local_path=LOCAL_PATH)
 
     if rag_service.load_index():
         rag_service.setup_query_engine()
-        print(f"[{time.time()}] RAG service initialized successfully")
+        logging.info(f"RAG service initialized successfully")
     else:
-        print(f"[{time.time()}] Failed to initialize RAG service")
+        logging.error(f"Failed to initialize RAG service")
 
     yield
 

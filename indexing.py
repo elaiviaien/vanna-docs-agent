@@ -91,7 +91,7 @@ def load_and_chunk(files: List[str]) -> List:
     # Clean up file paths in metadata
     for doc in documents:
         doc.metadata = {
-            "file_path": doc.metadata.get("file_path", "unknown").replace("cache/vanna/", ""),
+            "file_path": doc.metadata.get("file_path", "unknown").replace(".cache/vanna/", ""),
         }
 
     # Group documents by type for specialized processing
