@@ -20,7 +20,7 @@ EXCLUDED_EXTENSIONS: Set[str] = {
 
 EXCLUDED_DIRS: Set[str] = {
     '__pycache__', '.git', '.github', '.idea', '.vscode',
-    'node_modules', 'venv', 'env', '.env', '.venv', '.cache'
+    'node_modules', 'venv', 'env', '.venv'
 }
 
 def setup_logging(
@@ -115,26 +115,54 @@ def sync_repo(repo_url: str, local_path: str, last_sha_path: str) -> List[str]:
     set_last_sha(last_sha_path, new_sha)
     return changed_files
 
+
 def is_text_file(file_path: str) -> bool:
     """
     Check if a file is text-based (not binary) by examining its MIME type.
     """
+    # Use absolute path to ensure existence check works
+    abs_path = os.path.abspath(file_path)
+
     # Check file existence
-    if not os.path.exists(file_path) or os.path.isdir(file_path):
+    if not os.path.exists(abs_path) or os.path.isdir(abs_path):
+        logging.debug(f"File does not exist or is directory: {file_path}")
         return False
 
     # Check file size (skip files > 10MB)
-    if os.path.getsize(file_path) > 10 * 1024 * 1024:
+    try:
+        if os.path.getsize(abs_path) > 10 * 1024 * 1024:
+            logging.debug(f"File too large: {file_path}")
+            return False
+    except OSError:
+        logging.debug(f"Cannot determine size: {file_path}")
         return False
 
     # Check file extension
-    _, ext = os.path.splitext(file_path)
-    if ext.lower() in EXCLUDED_EXTENSIONS:
+    _, ext = os.path.splitext(file_path.lower())
+    if ext in EXCLUDED_EXTENSIONS:
+        logging.debug(f"Excluded extension {ext}: {file_path}")
         return False
 
     # Check MIME type
     mime_type, _ = mimetypes.guess_type(file_path)
-    if mime_type and any(mime_type.startswith(prefix) for prefix in EXCLUDED_MIME_PREFIXES):
+
+    # If mime_type is None, assume it's a text file if not in excluded extensions
+    if mime_type is None:
+        # For files without a clear MIME type, try to detect if they're text
+        try:
+            with open(abs_path, 'rb') as f:
+                sample = f.read(1024)
+                # Check if the content appears to be binary
+                if b'\x00' in sample:
+                    logging.debug(f"Appears to be binary: {file_path}")
+                    return False
+            return True
+        except Exception as e:
+            logging.debug(f"Error reading file {file_path}: {e}")
+            return False
+
+    if any(mime_type.startswith(prefix) for prefix in EXCLUDED_MIME_PREFIXES):
+        logging.debug(f"Excluded MIME type {mime_type}: {file_path}")
         return False
 
     return True
