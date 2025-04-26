@@ -16,9 +16,8 @@ from llama_index.core import (
 )
 from llama_index.core.node_parser import (
     CodeSplitter,
-    SemanticSplitterNodeParser,
     JSONNodeParser,
-    TokenTextSplitter
+    TokenTextSplitter, SentenceSplitter
 )
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 
@@ -30,13 +29,13 @@ REPO_URL = os.environ.get("REPO_URL", "https://github.com/vanna-ai/vanna.git")
 LOCAL_PATH = os.environ.get("LOCAL_PATH", "./.cache/vanna")
 LAST_SHA_PATH = os.environ.get("LAST_SHA_PATH", "./.cache/last_indexed.sha")
 INDEX_STORAGE = os.environ.get("INDEX_STORAGE", "./.cache/index_storage")
-MODEL_NAME = os.environ.get("MODEL_NAME")
 EMBEDDING_MODEL_NAME = os.getenv('EMBEDDING_MODEL_NAME', 'text-embedding-ada-002')
 MAX_TOKENS = 8192
 OVERLAP_TOKENS = 100
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
+
 
 def get_embed_model():
     """Create and return the embedding model instance."""
@@ -49,7 +48,7 @@ def get_embed_model():
     )
 
 
-def enforce_max_tokens(nodes, max_tokens=MAX_TOKENS, overlap_tokens=OVERLAP_TOKENS, model_name=MODEL_NAME):
+def enforce_max_tokens(nodes, max_tokens=MAX_TOKENS, overlap_tokens=OVERLAP_TOKENS, model_name=EMBEDDING_MODEL_NAME):
     """
     Splits any node exceeding `max_tokens` into smaller chunks using OpenAI's tokenizer.
     """
@@ -79,6 +78,7 @@ def load_and_chunk(files: List[str]) -> List:
     Load and chunk documents from the provided file paths.
     """
     # Filter out non-text files
+
     text_files = filter_files(files)
     if not text_files:
         logging.warning("No text files found in the provided files list.")
@@ -104,18 +104,12 @@ def load_and_chunk(files: List[str]) -> List:
                   not file.metadata.get("file_path", "").endswith(".json")]
 
     # Process documents with specialized parsers
-    embed_model = get_embed_model()
     json_nodes = JSONNodeParser().get_nodes_from_documents(json_docs)
     py_nodes = CodeSplitter(language="python", chunk_lines=20, chunk_lines_overlap=5).get_nodes_from_documents(py_docs)
 
-    splitter = SemanticSplitterNodeParser(
-        buffer_size=1,
-        breakpoint_percentile_threshold=95,
-        embed_model=embed_model
-    )
+    splitter = SentenceSplitter()
     other_nodes = splitter.get_nodes_from_documents(other_docs)
 
-    # Combine all nodes and enforce token limits
     all_nodes = py_nodes + other_nodes + json_nodes
     safe_nodes = enforce_max_tokens(all_nodes)
     return safe_nodes
@@ -123,38 +117,37 @@ def load_and_chunk(files: List[str]) -> List:
 
 def sync_repo_and_update_index():
     """Main function to sync repository and update index."""
-    # Sync repository and find changes
-    changed = sync_repo(REPO_URL, LOCAL_PATH, LAST_SHA_PATH)
-
-    # Choose which files to index
-    if not changed:
-        logging.info("Full index: scanning all files.")
-        files_to_idx = [os.path.join(dp, f)
-                        for dp, _, fs in os.walk(LOCAL_PATH)
-                        for f in fs]
-    else:
-        files_to_idx = changed
-    logging.info(f"Indexing {len(files_to_idx)} file(s)")
-
-    # Load and chunk files
-    t0 = time.time()
-    nodes = load_and_chunk(files_to_idx)
-    logging.info(f"Chunking done in {time.time() - t0:.2f}s")
-
-    # Configure embedding
     Settings.embed_model = get_embed_model()
 
-    # Create or update index
+    # Get files changed since last sync
+    changed = sync_repo(REPO_URL, LOCAL_PATH, LAST_SHA_PATH)
+    nodes = []
+    # Choose which files to index
+    all_files_to_indx = [os.path.join(dp, f)
+                         for dp, _, fs in os.walk(LOCAL_PATH)
+                         for f in fs]
+    if changed:
+        # Load and chunk files
+        t0 = time.time()
+        nodes = load_and_chunk(changed)
+        logging.info(f"Chunking done in {time.time() - t0:.2f}s")
+
     t1 = time.time()
     try:
         # load existing index
         storage_ctx = StorageContext.from_defaults(persist_dir=INDEX_STORAGE)
         index = load_index_from_storage(storage_ctx)
-        index.insert_nodes(nodes)
+        if nodes:
+            # Update index with new nodes
+            index.insert_nodes(nodes)
         logging.info("Index loaded from storage and updated incrementally.")
     except (FileNotFoundError, json.JSONDecodeError):
         # Create new index if loading fails
         logging.info("Invalid or missing index storage; building fresh storage in memory.")
+        # Load and chunk files
+        t0 = time.time()
+        nodes = load_and_chunk(all_files_to_indx)
+        logging.info(f"Chunking done in {time.time() - t0:.2f}s")
         index = VectorStoreIndex(nodes)
         logging.info("Created new VectorStoreIndex from scratch.")
 

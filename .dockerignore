@@ -1,0 +1,7 @@
+.cache/
+.cache/*
+.git/
+__pycache__/
+*.pyc
+/tests/
+venv/

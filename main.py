@@ -1,149 +1,78 @@
-import json
 import logging
 import os
-import time
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from llama_index.core import PromptTemplate, Settings
-from llama_index.core import StorageContext, load_index_from_storage
-from llama_index.core.postprocessor import SentenceTransformerRerank
-from llama_index.core.query_engine import RetrieverQueryEngine
-from llama_index.core.retrievers import BaseRetriever
-from llama_index.core.schema import QueryBundle
+from fastapi import FastAPI, BackgroundTasks
+from fastapi.responses import Response
+from llama_index.core import Settings
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
-from llama_index.retrievers.bm25 import BM25Retriever
 
-load_dotenv(override=True)
-OUT_OF_SCOPE_THRESHOLD = -5
+from rag_evaluator import run_rag_evaluator
+from rag_service import RAGService
+from utils import setup_logging
 
-app = FastAPI()
-
-INDEX_STORAGE = os.environ.get("INDEX_STORAGE", ".cache/index_storage")
-MODEL_NAME = os.getenv('MODEL_NAME', 'gpt-4.1')
-EMBEDDING_MODEL_NAME = os.getenv('EMBEDDING_MODEL_NAME', 'text-embedding-ada-002')
-LOCAL_PATH = os.environ.get("LOCAL_PATH", ".cache/vanna")
-AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
-
-Settings.llm = AzureOpenAI(api_version=AZURE_API_VERSION,
-                           azure_endpoint=AZURE_ENDPOINT,
-                           api_key=AZURE_OPENAI_API_KEY,
-                           model=MODEL_NAME,
-                           deployment_name=MODEL_NAME)
-Settings.embed_model = AzureOpenAIEmbedding(api_version=AZURE_API_VERSION,
-                                            azure_endpoint=AZURE_ENDPOINT,
-                                            api_key=AZURE_OPENAI_API_KEY,
-                                            model=EMBEDDING_MODEL_NAME,
-                                            deployment_name=EMBEDDING_MODEL_NAME)
+load_dotenv()
+setup_logging(log_file="logs/app.log")
+rag_service = None
 
 
-def load_index():
-    try:
-        storage_ctx = StorageContext.from_defaults(persist_dir=INDEX_STORAGE)
-        index = load_index_from_storage(storage_context=storage_ctx)
-        return index
-    except (FileNotFoundError, json.JSONDecodeError):
-        logging.error("Index not found or invalid. Please build it first.")
-        return None
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global rag_service
+
+    MODEL_NAME = os.getenv('MODEL_NAME', 'gpt-4.1')
+    EMBEDDING_MODEL_NAME = os.getenv('EMBEDDING_MODEL_NAME', 'text-embedding-ada-002')
+    AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+    AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+    AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
+
+    Settings.llm = AzureOpenAI(api_version=AZURE_API_VERSION,
+                               azure_endpoint=AZURE_ENDPOINT,
+                               api_key=AZURE_OPENAI_API_KEY,
+                               model=MODEL_NAME,
+                               deployment_name=MODEL_NAME)
+    Settings.embed_model = AzureOpenAIEmbedding(api_version=AZURE_API_VERSION,
+                                                azure_endpoint=AZURE_ENDPOINT,
+                                                api_key=AZURE_OPENAI_API_KEY,
+                                                model=EMBEDDING_MODEL_NAME,
+                                                deployment_name=EMBEDDING_MODEL_NAME)
+
+    INDEX_STORAGE = os.environ.get("INDEX_STORAGE", ".cache/index_storage")
+    LOCAL_PATH = os.environ.get("LOCAL_PATH", ".cache/vanna")
+
+    logging.info(f"Initializing RAG service")
+    rag_service = RAGService(index_storage=INDEX_STORAGE, local_path=LOCAL_PATH)
+
+    if rag_service.load_index():
+        rag_service.setup_query_engine()
+        logging.info(f"RAG service initialized successfully")
+    else:
+        logging.error(f"Failed to initialize RAG service")
+
+    yield
 
 
-class HybridRetriever(BaseRetriever):
-    def __init__(self, bm25_retriever, vector_retriever):
-        self.bm25_retriever = bm25_retriever
-        self.vector_retriever = vector_retriever
-        super().__init__()
-
-    def _retrieve(self, query_bundle: QueryBundle):
-        bm25_nodes = self.bm25_retriever.retrieve(query_bundle)
-        vector_nodes = self.vector_retriever.retrieve(query_bundle)
-        all_nodes = bm25_nodes + vector_nodes
-        unique_nodes = {node.node_id: node for node in all_nodes}
-        return list(unique_nodes.values())
-
-
-def get_github_url(node):
-    file_path = node.metadata.get("file_path")
-    if file_path:
-        relative_path = os.path.relpath(file_path, LOCAL_PATH)
-        url = f"https://github.com/vanna-ai/vanna/blob/main/{relative_path}"
-        return url
-    return None
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/query")
 async def query_index(query: str):
-    index = load_index()
-    if index:
-        # Define custom prompt for out-of-scope handling
-        qa_prompt_tmpl = PromptTemplate(
-            "Context information is below.\n"
-            "---------------------\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "Given the context information and not prior knowledge, "
-            "answer the query.\n"
-            "Query: {query_str}\n"
-            "Answer: "
-        )
+    global rag_service
 
-        # Set up retrievers
-        nodes = list(index.docstore.docs.values())
-        bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=20)
-        vector_retriever = index.as_retriever(similarity_top_k=20)
-        hybrid_retriever = HybridRetriever(bm25_retriever, vector_retriever)
+    if not rag_service or not rag_service.query_engine:
+        return {"error": "RAG service not initialized properly"}
 
-        # Set up re-ranking
-        rerank = SentenceTransformerRerank(
-            model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-            top_n=5
-        )
+    return rag_service.process_query(query)
 
-        query_engine = RetrieverQueryEngine.from_args(
-            retriever=hybrid_retriever,
-            node_postprocessors=[rerank],
-            text_qa_template=qa_prompt_tmpl,
-        )
 
-        # Measure query time
-        start_time = time.time()
-        response = query_engine.query(query)
-        end_time = time.time()
-        query_time = end_time - start_time
-        logging.info(f"Query time: {query_time:.2f} seconds")
+@app.get("/evaluate")
+async def evaluate_index(background_tasks: BackgroundTasks):
+    background_tasks.add_task(run_rag_evaluator)
 
-        # Extract sources
-        detailed_sources = []
-        for node_with_score in response.source_nodes:
-            node = node_with_score.node
-            score = node_with_score.score
-            github_url = get_github_url(node)
-            detailed_sources.append({
-                "node_id": node.node_id,
-                "score": float(score),
-                "text": node.text,
-                "metadata": node.metadata,
-                "github_url": github_url
-            })
-        top_scores = [node.score for node in response.source_nodes[:3]]  # top 3 results
-
-        if not any(score > OUT_OF_SCOPE_THRESHOLD for score in top_scores):
-            return {
-                "query": query,
-                "gpt_response": "Sorry, the question is out of scope.",
-                "sources": [],
-                "query_time": query_time,
-            }
-        return {
-            "query": query,
-            "gpt_response": response.response,
-            "sources": detailed_sources,
-            "query_time": query_time
-        }
-    else:
-        return {"error": "Index not loaded or invalid"}
+    return Response(status_code=202,
+                    content="Evaluation started in background.Check logs for progress and `evaluation_data` dir for results.")
 
 
 if __name__ == "__main__":

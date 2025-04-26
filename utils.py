@@ -1,10 +1,10 @@
 import logging
 import mimetypes
 import os
-from types import MappingProxyType
-from typing import List, Union, Optional, Iterable, Mapping, Set
+from typing import List, Union, Optional, Set
+
 import git
-from git import Repo
+from git import Repo, InvalidGitRepositoryError
 
 EXCLUDED_MIME_PREFIXES: Set[str] = {
     'image', 'audio', 'video', 'application/x-msdownload',
@@ -20,50 +20,61 @@ EXCLUDED_EXTENSIONS: Set[str] = {
 
 EXCLUDED_DIRS: Set[str] = {
     '__pycache__', '.git', '.github', '.idea', '.vscode',
-    'node_modules', 'venv', 'env', '.env', '.venv', '.cache'
+    'node_modules', 'venv', 'env', '.venv'
 }
+
 
 def setup_logging(
         level: Union[int, str] = logging.INFO,
         log_format: str = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-        handlers: Optional[Iterable[logging.Handler]] = None,
-        library_log_levels: Mapping[str, int] = MappingProxyType({'httpx': logging.WARNING})
+        log_file: Optional[str] = None
 ) -> None:
-    """
-    Configure application logging with customizable format and levels.
-
-    Args:
-        level: The logging level (int or string like 'INFO')
-        log_format: String format for log messages
-        handlers: List of logging handlers to use (creates StreamHandler if None)
-        library_log_levels: Dictionary mapping library names to logging levels
-    """
+    """Configure logging to output to console and file"""
     # Convert string log levels to uppercase
     if isinstance(level, str):
         level = level.upper()
 
-    if handlers is None:
-        handlers = [logging.StreamHandler()]
+    # Create formatter
+    formatter = logging.Formatter(log_format)
 
-    logging.basicConfig(level=level, format=log_format, handlers=handlers)
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
 
-    # Set log levels for specific libraries
-    for library, lib_level in library_log_levels.items():
-        logging.getLogger(library).setLevel(lib_level)
+    # Clear existing handlers to avoid duplicates
+    root_logger.handlers = []
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # File handler if specified
+    if log_file:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    # Set library-specific log levels
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+
 
 def init_or_update_repo(repo_url: str, path: str) -> Repo:
     """
     Clone the repository if not present, otherwise fetch the latest changes.
     """
-    if not os.path.exists(path):
+    try:
+        repo = Repo(path)
+        logging.info(f"Fetching updates for repository at {path}")
+        repo.remotes.origin.fetch()
+        return repo
+    except InvalidGitRepositoryError:
         logging.info(f"Cloning repository {repo_url} → {path}")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         return Repo.clone_from(repo_url, path, depth=1)
 
-    repo = Repo(path)
-    logging.info(f"Fetching updates for repository at {path}")
-    repo.remotes.origin.fetch()
-    return repo
+
 
 
 def get_last_sha(sha_path: str) -> Optional[str]:
@@ -115,26 +126,54 @@ def sync_repo(repo_url: str, local_path: str, last_sha_path: str) -> List[str]:
     set_last_sha(last_sha_path, new_sha)
     return changed_files
 
+
 def is_text_file(file_path: str) -> bool:
     """
     Check if a file is text-based (not binary) by examining its MIME type.
     """
+    # Use absolute path to ensure existence check works
+    abs_path = os.path.abspath(file_path)
+
     # Check file existence
-    if not os.path.exists(file_path) or os.path.isdir(file_path):
+    if not os.path.exists(abs_path) or os.path.isdir(abs_path):
+        logging.debug(f"File does not exist or is directory: {file_path}")
         return False
 
     # Check file size (skip files > 10MB)
-    if os.path.getsize(file_path) > 10 * 1024 * 1024:
+    try:
+        if os.path.getsize(abs_path) > 10 * 1024 * 1024:
+            logging.debug(f"File too large: {file_path}")
+            return False
+    except OSError:
+        logging.debug(f"Cannot determine size: {file_path}")
         return False
 
     # Check file extension
-    _, ext = os.path.splitext(file_path)
-    if ext.lower() in EXCLUDED_EXTENSIONS:
+    _, ext = os.path.splitext(file_path.lower())
+    if ext in EXCLUDED_EXTENSIONS:
+        logging.debug(f"Excluded extension {ext}: {file_path}")
         return False
 
     # Check MIME type
     mime_type, _ = mimetypes.guess_type(file_path)
-    if mime_type and any(mime_type.startswith(prefix) for prefix in EXCLUDED_MIME_PREFIXES):
+
+    # If mime_type is None, assume it's a text file if not in excluded extensions
+    if mime_type is None:
+        # For files without a clear MIME type, try to detect if they're text
+        try:
+            with open(abs_path, 'rb') as f:
+                sample = f.read(1024)
+                # Check if the content appears to be binary
+                if b'\x00' in sample:
+                    logging.debug(f"Appears to be binary: {file_path}")
+                    return False
+            return True
+        except Exception as e:
+            logging.debug(f"Error reading file {file_path}: {e}")
+            return False
+
+    if any(mime_type.startswith(prefix) for prefix in EXCLUDED_MIME_PREFIXES):
+        logging.debug(f"Excluded MIME type {mime_type}: {file_path}")
         return False
 
     return True
@@ -159,5 +198,3 @@ def filter_files(files: List[str]) -> List[str]:
         filtered.append(file_path)
 
     return filtered
-
-

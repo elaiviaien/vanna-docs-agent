@@ -78,7 +78,8 @@ def test_enforce_max_tokens_exceeds_limit(mock_nodes):
     with patch('tiktoken.encoding_for_model') as mock_encoding:
         mock_tokenizer = MagicMock()
         # Make large text return more than MAX_TOKENS
-        mock_tokenizer.encode.side_effect = lambda text: [0] * (MAX_TOKENS + 1000 if "alphabet " * 10000 in text else 50)
+        mock_tokenizer.encode.side_effect = lambda text: [0] * (
+            MAX_TOKENS + 1000 if "alphabet " * 10000 in text else 50)
         mock_encoding.return_value = mock_tokenizer
 
         with patch('indexing.TokenTextSplitter') as MockSplitter:
@@ -125,7 +126,7 @@ def test_load_and_chunk(mock_documents, mock_embedding_model):
             with patch('indexing.get_embed_model', return_value=mock_embedding_model):
                 with patch('indexing.JSONNodeParser') as MockJSONParser:
                     with patch('indexing.CodeSplitter') as MockCodeSplitter:
-                        with patch('indexing.SemanticSplitterNodeParser') as MockSemanticSplitter:
+                        with patch('indexing.SentenceSplitter') as MockSemanticSplitter:
                             with patch('indexing.enforce_max_tokens') as mock_enforce:
                                 # Setup node parser mocks
                                 json_node = MagicMock(spec=Node)
